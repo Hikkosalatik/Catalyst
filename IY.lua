@@ -10524,7 +10524,7 @@ addcmd('remotespy',{'rspy'},function(args, speaker)
 	notify("Loading",'Hold on a sec')
 	-- Full credit to exx, creator of SimpleSpy
 	-- also thanks to Amity for fixing
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/infyiff/backup/main/SimpleSpyV3/main.lua"))()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/Hikkosalatik/decomp/refs/heads/main/rspy.lua"))()
 end)
 
 addcmd("executor", {}, function(args, speaker)
