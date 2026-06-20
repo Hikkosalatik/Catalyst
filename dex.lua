@@ -932,6 +932,12 @@ local EmbeddedModules = {
 				-- context:AddRegistered("GET_REFERENCES")
 				-- context:AddRegistered("VIEW_API")
 
+				if #sList == 1 and Apps.GCFinder and env.getgc then
+					context:AddDivider()
+					context:AddRegistered("FIND_CONSTANT", env.getconstants == nil)
+					context:AddRegistered("FIND_UPVALUE", env.getupvalues == nil)
+				end
+
 				context:QueueDivider()
 
 				if presentClasses["BasePart"] or presentClasses["Model"] then
@@ -1343,6 +1349,20 @@ local EmbeddedModules = {
 					Explorer.InsertObjectContext:Show(x,y)
 				end})
 
+				context:Register("FIND_CONSTANT",{Name = "Find Constant", IconMap = Explorer.ClassIcons, Icon = 50, OnClick = function()
+					local sList = selection.List
+					if #sList >= 1 and Apps.GCFinder then
+						Apps.GCFinder:OpenWith("Constants", sList[1].Obj.Name)
+					end
+				end})
+
+				context:Register("FIND_UPVALUE",{Name = "Find Upvalue", IconMap = Explorer.ClassIcons, Icon = 50, OnClick = function()
+					local sList = selection.List
+					if #sList >= 1 and Apps.GCFinder then
+						Apps.GCFinder:OpenWith("Upvalues", sList[1].Obj.Name)
+					end
+				end})
+
 				--[[context:Register("CALL_FUNCTION",{Name = "Call Function", IconMap = Explorer.ClassIcons, Icon = 66, OnClick = function()
 
 				end})
@@ -1749,7 +1769,11 @@ local EmbeddedModules = {
 			Explorer.DoSearch = function(query)
 				table.clear(Explorer.SearchExpanded)
 				table.clear(searchResults)
-				expanded = (#query == 0 and Explorer.Expanded) or Explorer.SearchExpanded
+
+				local classFilter = Explorer.ActiveClassFilter -- array of class names or nil
+				local hasClassFilter = classFilter and #classFilter > 0
+
+				expanded = (#query == 0 and not hasClassFilter and Explorer.Expanded) or Explorer.SearchExpanded
 
 				local tostr = tostring;
 				local tfind = table.find;
@@ -1759,12 +1783,22 @@ local EmbeddedModules = {
 
 				local allnodes = nodes[game]
 
+				local isaFn = game.IsA
+				local function passesClass(obj)
+					if not hasClassFilter then return true end
+					for i = 1, #classFilter do
+						local ok, res = pcall(isaFn, obj, classFilter[i])
+						if ok and res then return true end
+					end
+					return false
+				end
+
 				local defaultSearch = (function(Obj, str) return (Obj.Name:lower()):find(str, 1, true) end)
 
 				local function searchTable(root, str, func)
 					local expandedpar = false
 					for _,node in ipairs(root) do
-						if func(node.Obj, str) then
+						if func(node.Obj, str) and passesClass(node.Obj) then
 							expandTable[node] = 0
 							searchResults[node] = true
 							if not expandedpar then
@@ -1796,10 +1830,17 @@ local EmbeddedModules = {
 					end
 				end
 
+				local didSearch = false
 				for _,v in ipairs(query:split(",")) do
 					if v:len() > 0 then
 						Search(v)
+						didSearch = true
 					end
+				end
+
+				-- class filter with no text query: match everything of that class
+				if not didSearch and hasClassFilter then
+					searchTable(allnodes, "", function() return true end)
 				end
 
 		--[=[if #query > 0 then
@@ -1898,6 +1939,67 @@ local EmbeddedModules = {
 				searchBox.FocusLost:Connect(function()
 					Explorer.DoSearch(searchBox.Text)
 				end)
+			end
+
+			Explorer.ActiveClassFilter = nil
+			Explorer.InitClassFilter = function()
+				local toolBar = Explorer.GuiElems.ToolBar
+				local button = toolBar:FindFirstChild("ClassFilter")
+				if not button then return end
+				local icon = button:FindFirstChild("Icon")
+
+				-- preset class groups the user can quickly filter by
+				local presets = {
+					{Name = "All (clear filter)", Classes = nil},
+					{Name = "Scripts & Modules", Classes = {"LuaSourceContainer"}},
+					{Name = "  LocalScripts", Classes = {"LocalScript"}},
+					{Name = "  Scripts", Classes = {"Script"}},
+					{Name = "  ModuleScripts", Classes = {"ModuleScript"}},
+					{Name = "Remotes & Bindables", Classes = {"RemoteEvent","RemoteFunction","BindableEvent","BindableFunction"}},
+					{Name = "  RemoteEvents", Classes = {"RemoteEvent"}},
+					{Name = "  RemoteFunctions", Classes = {"RemoteFunction"}},
+					{Name = "  BindableEvents", Classes = {"BindableEvent"}},
+					{Name = "  BindableFunctions", Classes = {"BindableFunction"}},
+					{Name = "Parts", Classes = {"BasePart"}},
+					{Name = "Models", Classes = {"Model"}},
+					{Name = "GUI Objects", Classes = {"GuiObject"}},
+					{Name = "Values", Classes = {"ValueBase"}},
+					{Name = "Sounds", Classes = {"Sound"}},
+					{Name = "Players", Classes = {"Player"}},
+				}
+
+				local context = Lib.ContextMenu.new()
+				context.Iconless = true
+				context.Width = 180
+				context.MaxHeight = 400
+
+				local function applyFilter(classes, label)
+					Explorer.ActiveClassFilter = classes
+					-- visual: highlight icon when a filter is active
+					if icon then
+						icon.ImageColor3 = classes and Color3.fromRGB(70, 160, 230) or Color3.fromRGB(0.6*255, 0.6*255, 0.6*255)
+					end
+					button.BackgroundColor3 = classes and Color3.fromRGB(30, 55, 80) or Color3.new(0.14901961386204,0.14901961386204,0.14901961386204)
+					-- re-run with the current text query
+					Explorer.DoSearch(Explorer.GuiElems.SearchBar.Text)
+					Explorer.Update()
+					Explorer.Refresh()
+				end
+
+				for _,preset in ipairs(presets) do
+					local classes = preset.Classes
+					context:Add({Name = preset.Name, OnClick = function()
+						applyFilter(classes, preset.Name)
+					end})
+				end
+
+				button.MouseButton1Click:Connect(function()
+					local pos = button.AbsolutePosition
+					local size = button.AbsoluteSize
+					context:Show(pos.X, pos.Y + size.Y + 2)
+				end)
+
+				Explorer.ApplyClassFilter = applyFilter
 			end
 
 			Explorer.InitEntryTemplate = function()
@@ -2154,7 +2256,7 @@ local EmbeddedModules = {
 				local explorerItems = create({
 					{1,"Folder",{Name="ExplorerItems",}},
 					{2,"Frame",{BackgroundColor3=Color3.new(0.20392157137394,0.20392157137394,0.20392157137394),BorderSizePixel=0,Name="ToolBar",Parent={1},Size=UDim2.new(1,0,0,22),}},
-					{3,"Frame",{BackgroundColor3=Color3.new(0.14901961386204,0.14901961386204,0.14901961386204),BorderColor3=Color3.new(0.1176470592618,0.1176470592618,0.1176470592618),BorderSizePixel=0,Name="SearchFrame",Parent={2},Position=UDim2.new(0,3,0,1),Size=UDim2.new(1,-6,0,18),}},
+					{3,"Frame",{BackgroundColor3=Color3.new(0.14901961386204,0.14901961386204,0.14901961386204),BorderColor3=Color3.new(0.1176470592618,0.1176470592618,0.1176470592618),BorderSizePixel=0,Name="SearchFrame",Parent={2},Position=UDim2.new(0,3,0,1),Size=UDim2.new(1,-25,0,18),}},
 					{4,"TextBox",{BackgroundColor3=Color3.new(1,1,1),BackgroundTransparency=1,ClearTextOnFocus=false,Font=3,Name="SearchBox",Parent={3},PlaceholderColor3=Color3.new(0.39215689897537,0.39215689897537,0.39215689897537),PlaceholderText="Search workspace",Position=UDim2.new(0,4,0,0),Size=UDim2.new(1,-24,0,18),Text="",TextColor3=Color3.new(1,1,1),TextSize=14,TextXAlignment=0,}},
 					{5,"UICorner",{CornerRadius=UDim.new(0,2),Parent={3},}},
 					{6,"UIStroke",{Thickness=1.4,Parent={3},Color=Color3.fromRGB(42,42,42)}},
@@ -2163,7 +2265,10 @@ local EmbeddedModules = {
 					{9,"TextButton",{AutoButtonColor=false,BackgroundColor3=Color3.new(0.12549020349979,0.12549020349979,0.12549020349979),BackgroundTransparency=1,BorderSizePixel=0,Font=3,Name="Refresh",Parent={2},Position=UDim2.new(1,-20,0,1),Size=UDim2.new(0,18,0,18),Text="",TextColor3=Color3.new(1,1,1),TextSize=14,Visible=false,}},
 					{10,"ImageLabel",{BackgroundColor3=Color3.new(1,1,1),BackgroundTransparency=1,Image="rbxassetid://5642310344",Parent={9},Position=UDim2.new(0,3,0,3),Size=UDim2.new(0,12,0,12),}},
 					{11,"Frame",{BackgroundColor3=Color3.new(0.15686275064945,0.15686275064945,0.15686275064945),BorderSizePixel=0,Name="ScrollCorner",Parent={1},Position=UDim2.new(1,-16,1,-16),Size=UDim2.new(0,16,0,16),Visible=false,}},
-					{12,"Frame",{BackgroundColor3=Color3.new(1,1,1),BackgroundTransparency=1,ClipsDescendants=true,Name="List",Parent={1},Position=UDim2.new(0,0,0,23),Size=UDim2.new(1,0,1,-23),}}
+					{12,"Frame",{BackgroundColor3=Color3.new(1,1,1),BackgroundTransparency=1,ClipsDescendants=true,Name="List",Parent={1},Position=UDim2.new(0,0,0,23),Size=UDim2.new(1,0,1,-23),}},
+					{13,"TextButton",{AutoButtonColor=false,BackgroundColor3=Color3.new(0.14901961386204,0.14901961386204,0.14901961386204),BorderSizePixel=0,Font=3,Name="ClassFilter",Parent={2},Position=UDim2.new(1,-20,0,1),Size=UDim2.new(0,18,0,18),Text="",TextColor3=Color3.new(1,1,1),TextSize=14,}},
+					{14,"ImageLabel",{BackgroundColor3=Color3.new(1,1,1),BackgroundTransparency=1,Image="rbxassetid://6034509993",ImageColor3=Color3.new(0.6,0.6,0.6),Name="Icon",Parent={13},Position=UDim2.new(0,2,0,2),Size=UDim2.new(0,14,0,14),}},
+					{15,"UICorner",{CornerRadius=UDim.new(0,2),Parent={13},}},
 				})
 
 				toolBar = explorerItems.ToolBar
@@ -2204,6 +2309,7 @@ local EmbeddedModules = {
 				-- Init stuff that requires the window
 				Explorer.InitRenameBox()
 				Explorer.InitSearch()
+				Explorer.InitClassFilter()
 				Explorer.InitDelCleaner()
 				selection.Changed:Connect(Explorer.UpdateSelectionVisuals)
 
@@ -11548,11 +11654,330 @@ local EmbeddedModules = {
 		end
 
 		return {InitDeps = initDeps, InitAfterMain = initAfterMain, Main = main}
+	end,
+	GCFinder = function()
+--[[
+	GC Finder Module
+	Two search panels:
+	  - Constants: searches string constants inside Lua functions in the GC
+	  - Upvalues:  searches upvalue names/values inside Lua functions in the GC
+]]
+		-- Common Locals
+		local Main,Lib,Apps,Settings
+		local Explorer, Properties, ScriptViewer
+		local API,RMD,env,service,plr,create,createSimple
+
+		local function initDeps(data)
+			Main = data.Main
+			Lib = data.Lib
+			Apps = data.Apps
+			Settings = data.Settings
+			API = data.API
+			RMD = data.RMD
+			env = data.env
+			service = data.service
+			plr = data.plr
+			create = data.create
+			createSimple = data.createSimple
+		end
+
+		local function initAfterMain()
+			Explorer = Apps.Explorer
+			Properties = Apps.Properties
+			ScriptViewer = Apps.ScriptViewer
+		end
+
+		local function main()
+			local GCFinder = {}
+
+			local window
+			local activeTab = "Constants" -- or "Upvalues"
+
+			-- resolve executor funcs (fall back to env / globals)
+			local getgc = env.getgc or getgc or get_gc_objects
+			local getconstants = env.getconstants or getconstants or (debug and debug.getconstants)
+			local getupvalues = env.getupvalues or getupvalues or (debug and debug.getupvalues)
+			local getinfo = env.getinfo or getinfo or (debug and (debug.getinfo or debug.info))
+			local islclosure = env.islclosure or islclosure or is_l_closure
+
+			window = Lib.Window.new()
+			window:SetTitle("GC Finder")
+			window:Resize(540, 460)
+			GCFinder.Window = window
+
+			local content = window.GuiElems.Content
+
+			-- ---- Tab bar -------------------------------------------------
+			local tabBar = create({
+				{1,"Frame",{Name="TabBar",BackgroundColor3=Color3.fromRGB(40,40,40),BorderSizePixel=0,Size=UDim2.new(1,0,0,26),}},
+				{2,"TextButton",{Name="ConstantsTab",Parent={1},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(52,52,52),BorderSizePixel=0,Font=3,Text="Constants",TextColor3=Color3.fromRGB(255,255,255),TextSize=14,Position=UDim2.new(0,0,0,0),Size=UDim2.new(0.5,-1,1,0),}},
+				{3,"TextButton",{Name="UpvaluesTab",Parent={1},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(40,40,40),BorderSizePixel=0,Font=3,Text="Upvalues",TextColor3=Color3.fromRGB(200,200,200),TextSize=14,Position=UDim2.new(0.5,1,0,0),Size=UDim2.new(0.5,-1,1,0),}},
+			})
+			tabBar.Parent = content
+
+			-- ---- Search + info bar --------------------------------------
+			local topBar = create({
+				{1,"Frame",{Name="TopBar",BackgroundColor3=Color3.fromRGB(33,33,33),BorderSizePixel=0,Position=UDim2.new(0,0,0,26),Size=UDim2.new(1,0,0,26),}},
+				{2,"Frame",{Name="SearchFrame",Parent={1},BackgroundColor3=Color3.fromRGB(38,38,38),BorderSizePixel=0,Position=UDim2.new(0,4,0,3),Size=UDim2.new(1,-8,0,20),}},
+				{3,"TextBox",{Name="SearchBox",Parent={2},BackgroundTransparency=1,ClearTextOnFocus=false,Font=3,PlaceholderColor3=Color3.fromRGB(120,120,120),PlaceholderText="Search constants (string)...",Position=UDim2.new(0,6,0,0),Size=UDim2.new(1,-12,1,0),Text="",TextColor3=Color3.fromRGB(255,255,255),TextSize=14,TextXAlignment=0,}},
+				{4,"UICorner",{CornerRadius=UDim.new(0,3),Parent={2},}},
+				{5,"UIStroke",{Thickness=1.2,Parent={2},Color=Color3.fromRGB(55,55,55),}},
+			})
+			topBar.Parent = content
+			local searchBox = topBar.SearchFrame.SearchBox
+
+			local statusLabel = create({
+				{1,"TextLabel",{Name="Status",BackgroundColor3=Color3.fromRGB(33,33,33),BorderSizePixel=0,Font=3,Text="Type a query and press Enter.",TextColor3=Color3.fromRGB(150,150,150),TextSize=13,TextXAlignment=0,Position=UDim2.new(0,0,0,52),Size=UDim2.new(1,0,0,20),}},
+				{2,"UIPadding",{Parent={1},PaddingLeft=UDim.new(0,6),}},
+			})
+			statusLabel.Parent = content
+
+			-- ---- Results scrolling list (native) ------------------------
+			local listFrame = Instance.new("ScrollingFrame")
+			listFrame.Name = "Results"
+			listFrame.Parent = content
+			listFrame.Position = UDim2.new(0, 0, 0, 74)
+			listFrame.Size = UDim2.new(1, 0, 1, -74)
+			listFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+			listFrame.BorderSizePixel = 0
+			listFrame.ScrollBarThickness = 8
+			listFrame.ScrollBarImageColor3 = Color3.fromRGB(90, 90, 90)
+			listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+			listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			listFrame.ClipsDescendants = true
+
+			local listLayout = Instance.new("UIListLayout")
+			listLayout.Parent = listFrame
+			listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+			listLayout.Padding = UDim.new(0, 2)
+
+			local listPad = Instance.new("UIPadding")
+			listPad.Parent = listFrame
+			listPad.PaddingTop = UDim.new(0, 4)
+			listPad.PaddingLeft = UDim.new(0, 4)
+			listPad.PaddingRight = UDim.new(0, 4)
+			listPad.PaddingBottom = UDim.new(0, 4)
+
+			-- ---- helpers -------------------------------------------------
+			local function clearResults()
+				for _,c in ipairs(listFrame:GetChildren()) do
+					if c:IsA("Frame") then c:Destroy() end
+				end
+			end
+
+			local function setClipboard(text)
+				if env.setclipboard then env.setclipboard(tostring(text)) end
+			end
+
+			local function funcLabel(fn)
+				local parts = {}
+				if getinfo then
+					local ok, info = pcall(getinfo, fn)
+					if ok and type(info) == "table" then
+						if info.name and info.name ~= "" then parts[#parts+1] = info.name end
+						if info.short_src then
+							parts[#parts+1] = info.short_src
+						elseif info.source then
+							parts[#parts+1] = tostring(info.source)
+						end
+						if info.currentline and info.currentline > 0 then
+							parts[#parts+1] = "line "..info.currentline
+						elseif info.linedefined and info.linedefined > 0 then
+							parts[#parts+1] = "line "..info.linedefined
+						end
+					end
+				end
+				if #parts == 0 then
+					-- try debug.info string form
+					if getinfo then
+						local ok, src = pcall(getinfo, fn, "s")
+						local ok2, ln = pcall(getinfo, fn, "l")
+						if ok and src then parts[#parts+1] = tostring(src) end
+						if ok2 and ln then parts[#parts+1] = "line "..tostring(ln) end
+					end
+				end
+				if #parts == 0 then parts[#parts+1] = tostring(fn) end
+				return table.concat(parts, "  |  ")
+			end
+
+			local function addResultRow(order, matchText, fn, detailText)
+				local row = create({
+					{1,"Frame",{Name="Row",BackgroundColor3=Color3.fromRGB(38,38,38),BorderSizePixel=0,Size=UDim2.new(1,-8,0,0),AutomaticSize=Enum.AutomaticSize.Y,LayoutOrder=order,}},
+					{2,"UICorner",{CornerRadius=UDim.new(0,4),Parent={1},}},
+					{3,"TextLabel",{Name="Match",Parent={1},BackgroundTransparency=1,Font=3,Text=matchText,TextColor3=Color3.fromRGB(120,200,120),TextSize=14,TextXAlignment=0,TextWrapped=true,Position=UDim2.new(0,8,0,4),Size=UDim2.new(1,-70,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
+					{4,"TextLabel",{Name="Detail",Parent={1},BackgroundTransparency=1,Font=3,Text=detailText,TextColor3=Color3.fromRGB(150,150,150),TextSize=12,TextXAlignment=0,TextWrapped=true,Position=UDim2.new(0,8,0,22),Size=UDim2.new(1,-70,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
+					{5,"UIPadding",{Parent={1},PaddingBottom=UDim.new(0,6),}},
+					{6,"TextButton",{Name="Copy",Parent={1},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(55,55,55),BorderSizePixel=0,Font=3,Text="copy",TextColor3=Color3.fromRGB(220,220,220),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-6,0,4),Size=UDim2.new(0,50,0,20),}},
+					{7,"UICorner",{CornerRadius=UDim.new(0,3),Parent={6},}},
+				})
+				row.Parent = listFrame
+
+				row.MouseEnter:Connect(function() row.BackgroundColor3 = Color3.fromRGB(48,48,48) end)
+				row.MouseLeave:Connect(function() row.BackgroundColor3 = Color3.fromRGB(38,38,38) end)
+				row.Copy.MouseButton1Click:Connect(function()
+					setClipboard(matchText)
+					row.Copy.Text = "ok!"
+					task.delay(1, function() if row and row.Parent then row.Copy.Text = "copy" end end)
+				end)
+				return row
+			end
+
+			-- ---- search routines ----------------------------------------
+			local searching = false
+
+			local function searchConstants(query)
+				if not getgc or not getconstants then
+					statusLabel.Text = "Executor missing getgc / getconstants."
+					return
+				end
+				query = query:lower()
+				local matches = 0
+				local order = 0
+				local scanned = 0
+				local gc = getgc(true)
+				for _,obj in ipairs(gc) do
+					if type(obj) == "function" then
+						local isLua = true
+						if islclosure then
+							local ok, res = pcall(islclosure, obj)
+							isLua = ok and res
+						end
+						if isLua then
+							scanned = scanned + 1
+							local ok, consts = pcall(getconstants, obj)
+							if ok and type(consts) == "table" then
+								for _,c in ipairs(consts) do
+									if type(c) == "string" and c:lower():find(query, 1, true) then
+										order = order + 1
+										if order <= 300 then
+											addResultRow(order, c, obj, funcLabel(obj))
+										end
+										matches = matches + 1
+										break -- one row per function
+									end
+								end
+							end
+						end
+					end
+				end
+				statusLabel.Text = ("%d function(s) with matching constants%s  (scanned %d closures)"):format(
+					matches, matches > 300 and "  showing 300" or "", scanned)
+			end
+
+			local function searchUpvalues(query)
+				if not getgc or not getupvalues then
+					statusLabel.Text = "Executor missing getgc / getupvalues."
+					return
+				end
+				query = query:lower()
+				local matches = 0
+				local order = 0
+				local scanned = 0
+				local gc = getgc(true)
+				for _,obj in ipairs(gc) do
+					if type(obj) == "function" then
+						local isLua = true
+						if islclosure then
+							local ok, res = pcall(islclosure, obj)
+							isLua = ok and res
+						end
+						if isLua then
+							scanned = scanned + 1
+							local ok, ups = pcall(getupvalues, obj)
+							if ok and type(ups) == "table" then
+								for k,v in pairs(ups) do
+									local keyStr = tostring(k)
+									local valStr = tostring(v)
+									local valType = type(v)
+									if keyStr:lower():find(query, 1, true) or valStr:lower():find(query, 1, true) then
+										order = order + 1
+										if order <= 300 then
+											local label = ("[%s] = %s  (%s)"):format(keyStr, valStr, valType)
+											addResultRow(order, label, obj, funcLabel(obj))
+										end
+										matches = matches + 1
+									end
+								end
+							end
+						end
+					end
+				end
+				statusLabel.Text = ("%d matching upvalue(s)%s  (scanned %d closures)"):format(
+					matches, matches > 300 and "  showing 300" or "", scanned)
+			end
+
+			local function doSearch()
+				if searching then return end
+				local q = searchBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+				clearResults()
+				if #q < 2 then
+					statusLabel.Text = "Enter at least 2 characters."
+					return
+				end
+				searching = true
+				statusLabel.Text = "Searching..."
+				task.spawn(function()
+					task.wait()
+					local ok, err = pcall(function()
+						if activeTab == "Constants" then
+							searchConstants(q)
+						else
+							searchUpvalues(q)
+						end
+					end)
+					if not ok then statusLabel.Text = "Error: "..tostring(err) end
+					searching = false
+				end)
+			end
+
+			searchBox.FocusLost:Connect(function(enter)
+				if enter then doSearch() end
+			end)
+
+			-- ---- tab switching ------------------------------------------
+			local function setTab(tab)
+				activeTab = tab
+				local cTab = tabBar.ConstantsTab
+				local uTab = tabBar.UpvaluesTab
+				if tab == "Constants" then
+					cTab.BackgroundColor3 = Color3.fromRGB(52,52,52)
+					cTab.TextColor3 = Color3.fromRGB(255,255,255)
+					uTab.BackgroundColor3 = Color3.fromRGB(40,40,40)
+					uTab.TextColor3 = Color3.fromRGB(200,200,200)
+					searchBox.PlaceholderText = "Search constants (string)..."
+				else
+					uTab.BackgroundColor3 = Color3.fromRGB(52,52,52)
+					uTab.TextColor3 = Color3.fromRGB(255,255,255)
+					cTab.BackgroundColor3 = Color3.fromRGB(40,40,40)
+					cTab.TextColor3 = Color3.fromRGB(200,200,200)
+					searchBox.PlaceholderText = "Search upvalues (name or value)..."
+				end
+				if #searchBox.Text >= 2 then doSearch() end
+			end
+			tabBar.ConstantsTab.MouseButton1Click:Connect(function() setTab("Constants") end)
+			tabBar.UpvaluesTab.MouseButton1Click:Connect(function() setTab("Upvalues") end)
+
+			-- ---- public: open & search for a given name -----------------
+			GCFinder.OpenWith = function(tab, query)
+				window:Show()
+				setTab(tab or "Constants")
+				if query then
+					searchBox.Text = query
+					doSearch()
+				end
+			end
+
+			GCFinder.Init = function() end
+
+			return GCFinder
+		end
+
+		return {InitDeps = initDeps, InitAfterMain = initAfterMain, Main = main}
 	end
 }
 
 -- Main vars
-local Main, Explorer, Properties, ScriptViewer, DefaultSettings, Notebook, Serializer, Lib, Console, SaveInstance
+local Main, Explorer, Properties, ScriptViewer, DefaultSettings, Notebook, Serializer, Lib, Console, SaveInstance, GCFinder
 local API, RM
 
 -- Default Settings
@@ -11665,7 +12090,7 @@ end
 Main = (function()
 	local Main = {}
 
-	Main.ModuleList = {"Explorer", "Properties", "ScriptViewer", "Console", "SaveInstance"}
+	Main.ModuleList = {"Explorer", "Properties", "ScriptViewer", "Console", "SaveInstance", "GCFinder"}
 	Main.Elevated = false
 	Main.MissingEnv = {}
 	Main.Version = "" -- Beta 1.0.0
@@ -11766,13 +12191,15 @@ Main = (function()
 		Console = Apps.Console
 		SaveInstance = Apps.SaveInstance
 		Notebook = Apps.Notebook
+		GCFinder = Apps.GCFinder
 		local appTable = {
 			Explorer = Explorer,
 			Properties = Properties,
 			ScriptViewer = ScriptViewer,
 			Console = Console,
 			SaveInstance = SaveInstance,
-			Notebook = Notebook
+			Notebook = Notebook,
+			GCFinder = GCFinder
 		}
 
 		Main.AppControls.Lib.InitAfterMain(appTable)
@@ -12530,6 +12957,10 @@ Main = (function()
 
 		Main.CreateApp({Name = "Save Instance", IconMap = Main.LargeIcons, Icon = "Watcher", Window = SaveInstance.Window})
 
+		if GCFinder and GCFinder.Window then
+			Main.CreateApp({Name = "GC Finder", IconMap = Main.LargeIcons, Icon = "Script_Viewer", Window = GCFinder.Window})
+		end
+
 		Lib.ShowGui(gui)
 	end
 
@@ -12658,6 +13089,7 @@ Main = (function()
 		ScriptViewer.Init()
 		Console.Init()
 		SaveInstance.Init()
+		if GCFinder and GCFinder.Init then GCFinder.Init() end
 		Lib.FastWait()
 
 		-- Done
