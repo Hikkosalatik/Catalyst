@@ -11844,6 +11844,7 @@ local EmbeddedModules = {
 			local function getinfo() return env.getinfo or getinfo or (debug and (debug.getinfo or debug.info)) end
 			local function islclosure() return env.islclosure or islclosure or is_l_closure end
 			local function setclipboard() return env.setclipboard end
+			local function getconnections() return env.getconnections or getconnections or get_signal_cons end
 
 			-- Best-effort function name resolver.
 			-- Lua does NOT store names in the function object, so for most
@@ -11895,6 +11896,62 @@ local EmbeddedModules = {
 			end
 			GCUtil.FuncName = funcName
 
+			-- Heuristically classify what a function probably IS, based on the
+			-- method names it references in its constants + a few upvalue hints.
+			-- Lua stores no real "type", so this is a best-effort guess.
+			local function classifyFunc(fn)
+				local tags = {}
+				local seen = {}
+				local function add(t) if not seen[t] then seen[t] = true tags[#tags+1] = t end end
+
+				-- gather constant strings
+				local gc2 = getconstants()
+				local strset = {}
+				if gc2 then
+					local ok, consts = pcall(gc2, fn)
+					if ok and type(consts) == "table" then
+						for _,c in ipairs(consts) do
+							if type(c) == "string" then strset[c] = true end
+						end
+					end
+				end
+
+				-- remote / networking
+				if strset["FireServer"] or strset["fireServer"] then add("RemoteEvent sender (FireServer)") end
+				if strset["InvokeServer"] then add("RemoteFunction caller (InvokeServer)") end
+				if strset["FireClient"] or strset["FireAllClients"] then add("server→client sender") end
+				if strset["OnClientEvent"] then add("RemoteEvent listener (OnClientEvent)") end
+				if strset["OnClientInvoke"] then add("RemoteFunction handler (OnClientInvoke)") end
+
+				-- signal connections
+				if strset["Connect"] or strset["connect"] or strset["ConnectParallel"] then add("signal connector (:Connect)") end
+				if strset["Wait"] and (strset["Connect"] == nil) then add("uses :Wait") end
+
+				-- common event handler hints
+				if strset["Touched"] then add("Touched handler") end
+				if strset["InputBegan"] or strset["InputEnded"] or strset["InputChanged"] then add("input handler") end
+				if strset["MouseButton1Click"] or strset["MouseButton1Down"] or strset["Activated"] then add("button handler") end
+				if strset["RenderStepped"] or strset["Heartbeat"] or strset["Stepped"] then add("render/step loop") end
+				if strset["ChildAdded"] or strset["DescendantAdded"] or strset["ChildRemoved"] then add("instance watcher") end
+				if strset["Changed"] or strset["GetPropertyChangedSignal"] then add("property watcher") end
+
+				-- data / module style
+				if strset["__index"] or strset["__newindex"] or strset["setmetatable"] then add("metatable/OOP method") end
+				if strset["require"] then add("uses require") end
+				if strset["HttpGet"] or strset["request"] or strset["HttpGetAsync"] then add("makes HTTP request") end
+
+				-- is it actively connected to a signal right now?
+				local gconn = getconnections()
+				if gconn then
+					-- we can only check this if we have a signal; skip global scan.
+					-- (kept as a hook; per-signal checks happen elsewhere)
+				end
+
+				if #tags == 0 then return "plain function / callback" end
+				return table.concat(tags, ", ")
+			end
+			GCUtil.ClassifyFunc = classifyFunc
+
 			-- Build a detailed multi-line description of a function
 			local function describeFunc(fn)
 				local lines = {}
@@ -11928,6 +11985,7 @@ local EmbeddedModules = {
 					local ok, res = pcall(il, fn)
 					if ok then lines[#lines+1] = "type: "..(res and "Lua closure" or "C closure") end
 				end
+				lines[#lines+1] = "role: "..classifyFunc(fn)
 				lines[#lines+1] = "function: "..funcName(fn).."  @  "..tostring(fn)
 				return table.concat(lines, "\n")
 			end
