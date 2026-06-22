@@ -11845,6 +11845,21 @@ local EmbeddedModules = {
 			local function islclosure() return env.islclosure or islclosure or is_l_closure end
 			local function setclipboard() return env.setclipboard end
 
+			-- Best-effort function name resolver
+			local function funcName(fn)
+				local gi = getinfo()
+				if gi then
+					local ok, info = pcall(gi, fn)
+					if ok and type(info) == "table" and info.name and info.name ~= "" then
+						return tostring(info.name)
+					end
+					local ok2, n = pcall(gi, fn, "n")
+					if ok2 and n and n ~= "" then return tostring(n) end
+				end
+				return "<anonymous>"
+			end
+			GCUtil.FuncName = funcName
+
 			-- Build a detailed multi-line description of a function
 			local function describeFunc(fn)
 				local lines = {}
@@ -11878,7 +11893,7 @@ local EmbeddedModules = {
 					local ok, res = pcall(il, fn)
 					if ok then lines[#lines+1] = "type: "..(res and "Lua closure" or "C closure") end
 				end
-				lines[#lines+1] = "address: "..tostring(fn)
+				lines[#lines+1] = "function: "..funcName(fn).."  @  "..tostring(fn)
 				return table.concat(lines, "\n")
 			end
 
@@ -11913,7 +11928,10 @@ local EmbeddedModules = {
 				for k,v in pairs(ups) do
 					n = n + 1
 					local vs = tostring(v)
-					if #vs > 30 then vs = vs:sub(1, 30).."..." end
+					if type(v) == "function" then
+						vs = funcName(v).." @ "..vs
+					end
+					if #vs > 44 then vs = vs:sub(1, 44).."..." end
 					strs[#strs+1] = "["..tostring(k).."]="..vs.." ("..type(v)..")"
 					if #strs >= 10 then break end
 				end
@@ -12068,17 +12086,19 @@ local EmbeddedModules = {
 					local row = create({
 						{1,"Frame",{Name="Row",BackgroundColor3=Color3.fromRGB(38,38,38),BorderSizePixel=0,Size=UDim2.new(1,-8,0,0),AutomaticSize=Enum.AutomaticSize.Y,LayoutOrder=order,ClipsDescendants=true,}},
 						{2,"UICorner",{CornerRadius=UDim.new(0,4),Parent={1},}},
-						{3,"TextButton",{Name="Head",Parent={1},AutoButtonColor=false,BackgroundTransparency=1,Font=3,Text="",TextSize=14,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
+						{14,"UIListLayout",{Parent={1},SortOrder=Enum.SortOrder.LayoutOrder,}},
+						{15,"UIPadding",{Parent={1},PaddingBottom=UDim.new(0,6),}},
+						{3,"TextButton",{Name="Head",Parent={1},LayoutOrder=1,AutoButtonColor=false,BackgroundTransparency=1,Font=3,Text="",TextSize=14,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
 						{4,"TextLabel",{Name="Match",Parent={3},BackgroundTransparency=1,Font=3,Text=matchText,TextColor3=Color3.fromRGB(120,200,120),TextSize=14,TextXAlignment=0,TextWrapped=true,Position=UDim2.new(0,8,0,5),Size=UDim2.new(1,-180,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
 						{5,"UIPadding",{Parent={3},PaddingBottom=UDim.new(0,6),}},
-						{6,"TextButton",{Name="Copy",Parent={1},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(55,55,55),BorderSizePixel=0,Font=3,Text="copy",TextColor3=Color3.fromRGB(220,220,220),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-116,0,5),Size=UDim2.new(0,50,0,20),}},
+						{6,"TextButton",{Name="Copy",Parent={3},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(55,55,55),BorderSizePixel=0,Font=3,Text="copy",TextColor3=Color3.fromRGB(220,220,220),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-116,0,5),Size=UDim2.new(0,50,0,20),}},
 						{7,"UICorner",{CornerRadius=UDim.new(0,3),Parent={6},}},
-						{8,"TextButton",{Name="Expand",Parent={1},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(55,55,55),BorderSizePixel=0,Font=3,Text="info",TextColor3=Color3.fromRGB(220,220,220),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-62,0,5),Size=UDim2.new(0,48,0,20),}},
+						{8,"TextButton",{Name="Expand",Parent={3},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(55,55,55),BorderSizePixel=0,Font=3,Text="info",TextColor3=Color3.fromRGB(220,220,220),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-62,0,5),Size=UDim2.new(0,48,0,20),}},
 						{9,"UICorner",{CornerRadius=UDim.new(0,3),Parent={8},}},
-						{10,"TextLabel",{Name="Detail",Parent={1},BackgroundTransparency=1,Visible=false,Font=Enum.Font.Code,Text=detail,TextColor3=Color3.fromRGB(160,160,160),TextSize=12,TextXAlignment=0,TextYAlignment=0,TextWrapped=true,Position=UDim2.new(0,8,0,30),Size=UDim2.new(1,-16,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
-						{11,"UIPadding",{Parent={1},PaddingBottom=UDim.new(0,6),}},
-						{12,"TextButton",{Name="Upvalues",Parent={1},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(60,80,110),BorderSizePixel=0,Font=3,Text="upvalues",TextColor3=Color3.fromRGB(225,235,255),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-8,0,5),Size=UDim2.new(0,52,0,20),}},
+						{12,"TextButton",{Name="Upvalues",Parent={3},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(60,80,110),BorderSizePixel=0,Font=3,Text="upvalues",TextColor3=Color3.fromRGB(225,235,255),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-8,0,5),Size=UDim2.new(0,52,0,20),}},
 						{13,"UICorner",{CornerRadius=UDim.new(0,3),Parent={12},}},
+						{10,"TextLabel",{Name="Detail",Parent={1},LayoutOrder=2,BackgroundTransparency=1,Visible=false,Font=Enum.Font.Code,Text=detail,TextColor3=Color3.fromRGB(160,160,160),TextSize=12,TextXAlignment=0,TextYAlignment=0,TextWrapped=true,Size=UDim2.new(1,-16,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
+						{11,"UIPadding",{Parent={10},PaddingLeft=UDim.new(0,8),PaddingBottom=UDim.new(0,4),}},
 					})
 					row.Parent = listFrame
 
@@ -12086,21 +12106,21 @@ local EmbeddedModules = {
 					local function toggle()
 						expanded = not expanded
 						row.Detail.Visible = expanded
-						row.Expand.Text = expanded and "hide" or "info"
+						row.Head.Expand.Text = expanded and "hide" or "info"
 					end
 					row.Head.MouseButton1Click:Connect(toggle)
-					row.Expand.MouseButton1Click:Connect(toggle)
+					row.Head.Expand.MouseButton1Click:Connect(toggle)
 					row.Head.MouseEnter:Connect(function() row.BackgroundColor3 = Color3.fromRGB(48,48,48) end)
 					row.Head.MouseLeave:Connect(function() row.BackgroundColor3 = Color3.fromRGB(38,38,38) end)
-					row.Copy.MouseButton1Click:Connect(function()
+					row.Head.Copy.MouseButton1Click:Connect(function()
 						local sc = setclipboard()
 						if sc then
 							sc(matchText)
-							row.Copy.Text = "ok!"
-							task.delay(1, function() if row and row.Parent then row.Copy.Text = "copy" end end)
+							row.Head.Copy.Text = "ok!"
+							task.delay(1, function() if row and row.Parent then row.Head.Copy.Text = "copy" end end)
 						end
 					end)
-					row.Upvalues.MouseButton1Click:Connect(function()
+					row.Head.Upvalues.MouseButton1Click:Connect(function()
 						if Apps.UpvalueFinder and Apps.UpvalueFinder.Inspect then
 							Apps.UpvalueFinder.Inspect(fn)
 						end
@@ -12174,6 +12194,7 @@ local EmbeddedModules = {
 								for k,v in pairs(ups) do
 									local keyStr = tostring(k)
 									local valStr = tostring(v)
+									if type(v) == "function" then valStr = funcName(v).." @ "..valStr end
 									if keyStr:lower():find(query, 1, true) or valStr:lower():find(query, 1, true) then
 										order = order + 1
 										if order <= 300 then
@@ -12238,38 +12259,50 @@ local EmbeddedModules = {
 					order = order + 1
 					local keyStr = tostring(up.key)
 					local valStr = tostring(up.value)
+					if up.type == "function" then valStr = funcName(up.value).."  @  "..valStr end
 					local canShare = (up.type == "table" or up.type == "function" or up.type == "userdata")
 
 					local card = create({
 						{1,"Frame",{Name="Upvalue",BackgroundColor3=Color3.fromRGB(38,38,38),BorderSizePixel=0,Size=UDim2.new(1,-8,0,0),AutomaticSize=Enum.AutomaticSize.Y,LayoutOrder=order,ClipsDescendants=true,}},
 						{2,"UICorner",{CornerRadius=UDim.new(0,4),Parent={1},}},
-						{3,"TextLabel",{Name="Key",Parent={1},BackgroundTransparency=1,Font=Enum.Font.GothamBold,Text="["..keyStr.."]  ("..up.type..")",TextColor3=Color3.fromRGB(255,210,120),TextSize=13,TextXAlignment=0,Position=UDim2.new(0,8,0,6),Size=UDim2.new(1,-200,0,18),}},
-						{4,"TextLabel",{Name="Value",Parent={1},BackgroundTransparency=1,Font=Enum.Font.Code,Text=valStr,TextColor3=Color3.fromRGB(190,220,190),TextSize=12,TextXAlignment=0,TextYAlignment=0,TextWrapped=true,Position=UDim2.new(0,8,0,26),Size=UDim2.new(1,-16,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
-						{5,"UIPadding",{Parent={1},PaddingBottom=UDim.new(0,8),}},
-						{6,"TextButton",{Name="Copy",Parent={1},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(55,55,55),BorderSizePixel=0,Font=3,Text="copy",TextColor3=Color3.fromRGB(220,220,220),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-66,0,5),Size=UDim2.new(0,52,0,20),}},
-						{7,"UICorner",{CornerRadius=UDim.new(0,3),Parent={6},}},
-						{8,"TextButton",{Name="UsersBtn",Parent={1},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(60,80,110),BorderSizePixel=0,Font=3,Text="users",TextColor3=Color3.fromRGB(225,235,255),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-10,0,5),Size=UDim2.new(0,52,0,20),}},
-						{9,"UICorner",{CornerRadius=UDim.new(0,3),Parent={8},}},
-						{10,"Frame",{Name="SharersFrame",Parent={1},BackgroundTransparency=1,Visible=false,Position=UDim2.new(0,8,0,0),Size=UDim2.new(1,-16,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
+						-- header block (key + value + buttons), grows with value text
+						{3,"Frame",{Name="Header",Parent={1},BackgroundTransparency=1,LayoutOrder=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
+						{4,"TextLabel",{Name="Key",Parent={3},BackgroundTransparency=1,Font=Enum.Font.GothamBold,Text="["..keyStr.."]  ("..up.type..")",TextColor3=Color3.fromRGB(255,210,120),TextSize=13,TextXAlignment=0,Position=UDim2.new(0,8,0,6),Size=UDim2.new(1,-130,0,18),}},
+						{5,"TextLabel",{Name="Value",Parent={3},BackgroundTransparency=1,Font=Enum.Font.Code,Text=valStr,TextColor3=Color3.fromRGB(190,220,190),TextSize=12,TextXAlignment=0,TextYAlignment=0,TextWrapped=true,Position=UDim2.new(0,8,0,26),Size=UDim2.new(1,-16,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
+						{6,"UIPadding",{Parent={3},PaddingBottom=UDim.new(0,8),}},
+						{7,"TextButton",{Name="Copy",Parent={3},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(55,55,55),BorderSizePixel=0,Font=3,Text="copy",TextColor3=Color3.fromRGB(220,220,220),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-66,0,5),Size=UDim2.new(0,52,0,20),}},
+						{8,"UICorner",{CornerRadius=UDim.new(0,3),Parent={7},}},
+						{9,"TextButton",{Name="UsersBtn",Parent={3},AutoButtonColor=false,BackgroundColor3=Color3.fromRGB(60,80,110),BorderSizePixel=0,Font=3,Text="users",TextColor3=Color3.fromRGB(225,235,255),TextSize=12,AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-10,0,5),Size=UDim2.new(0,52,0,20),}},
+						{10,"UICorner",{CornerRadius=UDim.new(0,3),Parent={9},}},
+						-- sharers block (sits BELOW the header via list layout)
+						{11,"Frame",{Name="SharersFrame",Parent={1},BackgroundTransparency=1,Visible=false,LayoutOrder=2,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,}},
+						{12,"UIListLayout",{Parent={1},SortOrder=Enum.SortOrder.LayoutOrder,}},
+						{13,"UIPadding",{Parent={1},PaddingBottom=UDim.new(0,6),}},
 					})
 					card.Parent = container
 
 					local sharersFrame = card.SharersFrame
+					-- inner padding + layout for the sharers list
+					local sharersPad = Instance.new("UIPadding")
+					sharersPad.Parent = sharersFrame
+					sharersPad.PaddingLeft = UDim.new(0, 8)
+					sharersPad.PaddingRight = UDim.new(0, 8)
+					sharersPad.PaddingBottom = UDim.new(0, 6)
 					local sharersList = Instance.new("UIListLayout")
 					sharersList.Parent = sharersFrame
 					sharersList.SortOrder = Enum.SortOrder.LayoutOrder
 					sharersList.Padding = UDim.new(0, 2)
 
-					card.Copy.MouseButton1Click:Connect(function()
+					card.Header.Copy.MouseButton1Click:Connect(function()
 						if sc then
 							sc(valStr)
-							card.Copy.Text = "ok!"
-							task.delay(1, function() if card and card.Parent then card.Copy.Text = "copy" end end)
+							card.Header.Copy.Text = "ok!"
+							task.delay(1, function() if card and card.Parent then card.Header.Copy.Text = "copy" end end)
 						end
 					end)
 
 					-- the "users" button: find other functions sharing this upvalue
-					local btn = card.UsersBtn
+					local btn = card.Header.UsersBtn
 
 					local loaded = false
 					local shown = false
