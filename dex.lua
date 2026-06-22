@@ -11845,23 +11845,52 @@ local EmbeddedModules = {
 			local function islclosure() return env.islclosure or islclosure or is_l_closure end
 			local function setclipboard() return env.setclipboard end
 
-			-- Best-effort function name resolver
+			-- Best-effort function name resolver.
+			-- Lua does NOT store names in the function object, so for most
+			-- anonymous callbacks getinfo().name is empty. In that case we
+			-- build a useful label from the source file + line it's defined on.
 			local function funcName(fn)
 				local gi = getinfo()
-				if gi then
-					-- table form (debug.getinfo style)
-					local ok, info = pcall(gi, fn)
-					if ok and type(info) == "table" and type(info.name) == "string" and info.name ~= "" then
-						return info.name
-					end
-					-- options form: debug.info(fn,"n") returns a string,
-					-- but debug.getinfo(fn,"n") returns a table {name=...}
+				if not gi then return "<anonymous>" end
+
+				local name, src, line
+
+				-- table form (debug.getinfo style)
+				local ok, info = pcall(gi, fn)
+				if ok and type(info) == "table" then
+					if type(info.name) == "string" and info.name ~= "" then name = info.name end
+					src = info.short_src or info.source
+					line = info.linedefined or info.currentline
+				end
+
+				-- options form fallbacks (debug.info)
+				if not name then
 					local ok2, n = pcall(gi, fn, "n")
 					if ok2 then
-						if type(n) == "string" and n ~= "" then return n end
-						if type(n) == "table" and type(n.name) == "string" and n.name ~= "" then return n.name end
+						if type(n) == "string" and n ~= "" then name = n
+						elseif type(n) == "table" and type(n.name) == "string" and n.name ~= "" then name = n.name end
 					end
 				end
+				if not src then
+					local ok3, s = pcall(gi, fn, "s")
+					if ok3 and type(s) == "string" then src = s end
+				end
+				if not line then
+					local ok4, l = pcall(gi, fn, "l")
+					if ok4 and type(l) == "number" then line = l end
+				end
+
+				if name then return name end
+
+				-- build "basename:line" from the source path
+				if type(src) == "string" and src ~= "" then
+					local base = src:match("([^%.]+)$") or src -- last dotted segment
+					if line and line >= 0 then
+						return base..":"..tostring(line)
+					end
+					return base
+				end
+
 				return "<anonymous>"
 			end
 			GCUtil.FuncName = funcName
