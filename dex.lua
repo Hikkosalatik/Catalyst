@@ -11849,12 +11849,18 @@ local EmbeddedModules = {
 			local function funcName(fn)
 				local gi = getinfo()
 				if gi then
+					-- table form (debug.getinfo style)
 					local ok, info = pcall(gi, fn)
-					if ok and type(info) == "table" and info.name and info.name ~= "" then
-						return tostring(info.name)
+					if ok and type(info) == "table" and type(info.name) == "string" and info.name ~= "" then
+						return info.name
 					end
+					-- options form: debug.info(fn,"n") returns a string,
+					-- but debug.getinfo(fn,"n") returns a table {name=...}
 					local ok2, n = pcall(gi, fn, "n")
-					if ok2 and n and n ~= "" then return tostring(n) end
+					if ok2 then
+						if type(n) == "string" and n ~= "" then return n end
+						if type(n) == "table" and type(n.name) == "string" and n.name ~= "" then return n.name end
+					end
 				end
 				return "<anonymous>"
 			end
