@@ -11844,7 +11844,6 @@ local EmbeddedModules = {
 			local function getinfo() return env.getinfo or getinfo or (debug and (debug.getinfo or debug.info)) end
 			local function islclosure() return env.islclosure or islclosure or is_l_closure end
 			local function setclipboard() return env.setclipboard end
-			local function getconnections() return env.getconnections or getconnections or get_signal_cons end
 
 			-- Best-effort function name resolver.
 			-- Lua does NOT store names in the function object, so for most
@@ -11896,62 +11895,6 @@ local EmbeddedModules = {
 			end
 			GCUtil.FuncName = funcName
 
-			-- Heuristically classify what a function probably IS, based on the
-			-- method names it references in its constants + a few upvalue hints.
-			-- Lua stores no real "type", so this is a best-effort guess.
-			local function classifyFunc(fn)
-				local tags = {}
-				local seen = {}
-				local function add(t) if not seen[t] then seen[t] = true tags[#tags+1] = t end end
-
-				-- gather constant strings
-				local gc2 = getconstants()
-				local strset = {}
-				if gc2 then
-					local ok, consts = pcall(gc2, fn)
-					if ok and type(consts) == "table" then
-						for _,c in ipairs(consts) do
-							if type(c) == "string" then strset[c] = true end
-						end
-					end
-				end
-
-				-- remote / networking
-				if strset["FireServer"] or strset["fireServer"] then add("RemoteEvent sender (FireServer)") end
-				if strset["InvokeServer"] then add("RemoteFunction caller (InvokeServer)") end
-				if strset["FireClient"] or strset["FireAllClients"] then add("server→client sender") end
-				if strset["OnClientEvent"] then add("RemoteEvent listener (OnClientEvent)") end
-				if strset["OnClientInvoke"] then add("RemoteFunction handler (OnClientInvoke)") end
-
-				-- signal connections
-				if strset["Connect"] or strset["connect"] or strset["ConnectParallel"] then add("signal connector (:Connect)") end
-				if strset["Wait"] and (strset["Connect"] == nil) then add("uses :Wait") end
-
-				-- common event handler hints
-				if strset["Touched"] then add("Touched handler") end
-				if strset["InputBegan"] or strset["InputEnded"] or strset["InputChanged"] then add("input handler") end
-				if strset["MouseButton1Click"] or strset["MouseButton1Down"] or strset["Activated"] then add("button handler") end
-				if strset["RenderStepped"] or strset["Heartbeat"] or strset["Stepped"] then add("render/step loop") end
-				if strset["ChildAdded"] or strset["DescendantAdded"] or strset["ChildRemoved"] then add("instance watcher") end
-				if strset["Changed"] or strset["GetPropertyChangedSignal"] then add("property watcher") end
-
-				-- data / module style
-				if strset["__index"] or strset["__newindex"] or strset["setmetatable"] then add("metatable/OOP method") end
-				if strset["require"] then add("uses require") end
-				if strset["HttpGet"] or strset["request"] or strset["HttpGetAsync"] then add("makes HTTP request") end
-
-				-- is it actively connected to a signal right now?
-				local gconn = getconnections()
-				if gconn then
-					-- we can only check this if we have a signal; skip global scan.
-					-- (kept as a hook; per-signal checks happen elsewhere)
-				end
-
-				if #tags == 0 then return "plain function / callback" end
-				return table.concat(tags, ", ")
-			end
-			GCUtil.ClassifyFunc = classifyFunc
-
 			-- Build a detailed multi-line description of a function
 			local function describeFunc(fn)
 				local lines = {}
@@ -11985,7 +11928,6 @@ local EmbeddedModules = {
 					local ok, res = pcall(il, fn)
 					if ok then lines[#lines+1] = "type: "..(res and "Lua closure" or "C closure") end
 				end
-				lines[#lines+1] = "role: "..classifyFunc(fn)
 				lines[#lines+1] = "function: "..funcName(fn).."  @  "..tostring(fn)
 				return table.concat(lines, "\n")
 			end
@@ -12735,20 +12677,72 @@ Main = (function()
 		--env.setfflag = missing("function", setfflag)
 		env.request = missing("function", request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))
 
-        function hicompile(script)
-            httpresponse = request({
-                Url = "http://127.0.0.1:9002/",
-                Body = base64.encode(getscriptbytecode(script)),  -- The base64 encoded bytecode
-                Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "text/plain"
-                },
-            })
-            return httpresponse.Body
-        end
+		-- base64 encoder: prefer the executor's native one, fall back to pure Lua
+		local base64encode =
+			(crypt and crypt.base64encode) or
+			(crypt and crypt.base64 and crypt.base64.encode) or
+			(base64 and base64.encode) or
+			base64_encode or
+			(function()
+				local b = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+				return function(data)
+					return ((data:gsub(".", function(x)
+						local r, bits = "", x:byte()
+						for i = 8, 1, -1 do r = r .. (bits % 2 ^ i - bits % 2 ^ (i - 1) > 0 and "1" or "0") end
+						return r
+					end) .. "0000"):gsub("%d%d%d?%d?%d?%d?", function(x)
+						if #x < 6 then return "" end
+						local c = 0
+						for i = 1, 6 do c = c + (x:sub(i, i) == "1" and 2 ^ (6 - i) or 0) end
+						return b:sub(c + 1, c + 1)
+					end) .. ({ "", "==", "=" })[#data % 3 + 1])
+				end
+			end)()
 
-        getgenv().decompile = hicompile
-		env.decompile = hicompile or getgenv().decompile --missing("function", decompile) or 
+		-- Custom local decompiler API (POST base64 bytecode to 127.0.0.1:9002).
+		-- Mirrors the Konstant pattern: rate-limit, status check, error text.
+		local DECOMPILE_API = "http://185.218.0.88:9002/"
+		local lastDecompileCall = 0
+
+		local function localDecompile(scriptPath)
+			if not env.getscriptbytecode then
+				return "-- Decompiler unavailable: getscriptbytecode is missing."
+			end
+			if not env.request then
+				return "-- Decompiler unavailable: no HTTP request function."
+			end
+
+			local okBytecode, bytecode = pcall(env.getscriptbytecode, scriptPath)
+			if not okBytecode or type(bytecode) ~= "string" or #bytecode == 0 then
+				return ("-- Failed to get script bytecode, error:\n\n--[[\n%s\n--]]"):format(tostring(bytecode))
+			end
+
+			-- simple rate limit (avoid hammering the local server)
+			local elapsed = os.clock() - lastDecompileCall
+			if elapsed <= 0.5 then task.wait(0.5 - elapsed) end
+
+			local okReq, result = pcall(env.request, {
+				Url = DECOMPILE_API,
+				Body = base64encode(bytecode),
+				Method = "POST",
+				Headers = { ["Content-Type"] = "text/plain" },
+			})
+			lastDecompileCall = os.clock()
+
+			if not okReq or type(result) ~= "table" then
+				return ("-- Decompiler request failed:\n\n--[[\n%s\n--]]"):format(tostring(result))
+			end
+
+			local status = result.StatusCode or result.status_code or 200
+			if status ~= 200 then
+				return ("-- Decompiler API returned status %s:\n\n--[[\n%s\n--]]"):format(tostring(status), tostring(result.Body))
+			end
+
+			return result.Body
+		end
+
+		getgenv().decompile = localDecompile
+		env.decompile = localDecompile
 		env.isViableDecompileScript = function(obj)
 			if obj:IsA("ModuleScript") then
 				return true
