@@ -1236,7 +1236,7 @@ end
 --========================================================================
 -- Detect the loader URL: explicit config wins, otherwise fall back to the
 -- public Catalyst loader. Set Config.LoaderUrl if you use a custom host.
-local DEFAULT_LOADER = "https://api.luarmor.net/files/v4/loaders/fe86ddff66cfbced237f22d101531c35.lua"
+local DEFAULT_LOADER = "https://raw.githubusercontent.com/Hikkosalatik/Catalyst/refs/heads/main/Main.lua"
 
 local function buildTeleportPayload()
 	-- serialize the runtime config so the next session restores it
