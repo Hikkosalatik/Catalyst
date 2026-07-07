@@ -1300,7 +1300,7 @@ end)
 
 addcmd("dex", {"explorer"}, "Load the DEX explorer", function()
 	Notify("Loading", "DEX explorer...", Theme.Accent2)
-	loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/b042c96f2a52417173570ae403a3b723.lua"))()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/Hikkosalatik/Catalyst/refs/heads/main/DexRewrited"))()
 end)
 
 addcmd("sspy", {"simplespy"}, "Load SimpleSpy remote spy", function()
